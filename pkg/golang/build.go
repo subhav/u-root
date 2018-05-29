@@ -10,20 +10,30 @@ import (
 	"strings"
 )
 
-type Environ struct {
+type Environ interface{
+	PackageByPath(string) (*build.Package, error)
+	Package(string) (*build.Package, error)
+	Deps(string) (*ListPackage, error)
+	Env() []string
+	String() string
+	Build(string, string, BuildOpts) error
+	BuildDir(string, string, BuildOpts) error
+}
+
+type RealEnviron struct {
 	build.Context
 }
 
 // Default is the default build environment comprised of the default GOPATH,
 // GOROOT, GOOS, GOARCH, and CGO_ENABLED values.
-func Default() Environ {
-	return Environ{Context: build.Default}
+func Default() RealEnviron {
+	return RealEnviron{Context: build.Default}
 }
 
 // PackageByPath retrieves information about a package by its file system path.
 //
 // `path` is assumed to be the directory containing the package.
-func (c Environ) PackageByPath(path string) (*build.Package, error) {
+func (c RealEnviron) PackageByPath(path string) (*build.Package, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -32,7 +42,7 @@ func (c Environ) PackageByPath(path string) (*build.Package, error) {
 }
 
 // Package retrieves information about a package by its Go import path.
-func (c Environ) Package(importPath string) (*build.Package, error) {
+func (c RealEnviron) Package(importPath string) (*build.Package, error) {
 	return c.Context.Import(importPath, "", 0)
 }
 
@@ -53,14 +63,14 @@ type ListPackage struct {
 	ImportPath string
 }
 
-func (c Environ) goCmd(args ...string) *exec.Cmd {
+func (c RealEnviron) goCmd(args ...string) *exec.Cmd {
 	cmd := exec.Command(filepath.Join(c.GOROOT, "bin", "go"), args...)
 	cmd.Env = append(os.Environ(), c.Env()...)
 	return cmd
 }
 
 // Deps lists all dependencies of the package given by `importPath`.
-func (c Environ) Deps(importPath string) (*ListPackage, error) {
+func (c RealEnviron) Deps(importPath string) (*ListPackage, error) {
 	// The output of this is almost the same as build.Import, except for
 	// the dependencies.
 	cmd := c.goCmd("list", "-json", importPath)
@@ -76,7 +86,7 @@ func (c Environ) Deps(importPath string) (*ListPackage, error) {
 	return &p, nil
 }
 
-func (c Environ) Env() []string {
+func (c RealEnviron) Env() []string {
 	var env []string
 	if c.GOARCH != "" {
 		env = append(env, fmt.Sprintf("GOARCH=%s", c.GOARCH))
@@ -98,11 +108,11 @@ func (c Environ) Env() []string {
 	return env
 }
 
-func (c Environ) String() string {
+func (c RealEnviron) String() string {
 	return strings.Join(c.Env(), " ")
 }
 
-// Optional arguments to Environ.Build.
+// Optional arguments to RealEnviron.Build.
 type BuildOpts struct {
 	// ExtraArgs to `go build`.
 	ExtraArgs []string
@@ -110,7 +120,7 @@ type BuildOpts struct {
 
 // Build compiles the package given by `importPath`, writing the build object
 // to `binaryPath`.
-func (c Environ) Build(importPath string, binaryPath string, opts BuildOpts) error {
+func (c RealEnviron) Build(importPath string, binaryPath string, opts BuildOpts) error {
 	p, err := c.Package(importPath)
 	if err != nil {
 		return err
@@ -121,7 +131,7 @@ func (c Environ) Build(importPath string, binaryPath string, opts BuildOpts) err
 
 // BuildDir compiles the package in the directory `dirPath`, writing the build
 // object to `binaryPath`.
-func (c Environ) BuildDir(dirPath string, binaryPath string, opts BuildOpts) error {
+func (c RealEnviron) BuildDir(dirPath string, binaryPath string, opts BuildOpts) error {
 	args := []string{
 		"build",
 		"-a", // Force rebuilding of packages.
